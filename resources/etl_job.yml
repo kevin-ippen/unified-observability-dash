@@ -1,0 +1,25 @@
+resources:
+  jobs:
+    ai_observability_refresh:
+      name: "AI Observability — Silver Layer Refresh"
+      description: >-
+        Daily refresh of the 4 silver-layer tables that feed the AI Observability dashboard.
+        Reads from system tables (billing.usage, ai_gateway.usage, query.history)
+        and writes to ${var.catalog}.${var.schema}.
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "America/New_York"
+      tasks:
+        - task_key: refresh_silver_layer
+          notebook_task:
+            notebook_path: ../src/notebooks/refresh_silver_layer.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+      queue:
+        enabled: true
