@@ -30,9 +30,12 @@ targets:
     mode: production
     workspace:
       host: https://adb-984752964297111.11.azuredatabricks.net
+      root_path: /Shared/.bundle/${bundle.name}/prod
     variables:
       catalog: "main"
       schema: "ai_observability"
     permissions:
+      - level: CAN_VIEW
+        group_name: "users"
       - level: CAN_RUN
         group_name: "users"
