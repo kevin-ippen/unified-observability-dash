@@ -22,14 +22,13 @@ TABLES = [
     "genie_daily_metrics",
 ]
 
-# Expected pages in the exported dashboard (v1.2.0+)
+# Expected pages in the exported dashboard
 EXPECTED_PAGES = [
     "AI Cost",
     "AI Operations",
-    "Genie Spaces",
+    "Genie",
     "Genie Code",
     "Unit Economics",
-    "Global Filters",
 ]
 
 # Pattern: main.ai_observability.table_name -> table_name
