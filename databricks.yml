@@ -31,6 +31,8 @@ targets:
     workspace:
       host: https://adb-984752964297111.11.azuredatabricks.net
       root_path: /Shared/.bundle/${bundle.name}/prod
+    run_as:
+      service_principal_name: "ai-observability-sp"
     variables:
       catalog: "main"
       schema: "ai_observability"
@@ -39,3 +41,5 @@ targets:
         group_name: "users"
       - level: CAN_RUN
         group_name: "users"
+      - level: CAN_MANAGE
+        service_principal_name: "ai-observability-sp"
