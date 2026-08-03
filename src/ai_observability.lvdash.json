@@ -1,0 +1,4394 @@
+{
+  "datasets": [
+    {
+      "displayName": "Unit Economics (Matched)",
+      "name": "unit_economics",
+      "queryLines": [
+        "SELECT\n",
+        "  endpoint_name,\n",
+        "  model_canonical,\n",
+        "  event_date AS usage_date,\n",
+        "  DATE_TRUNC('WEEK', event_date) AS week,\n",
+        "  SUM(request_count) AS total_requests,\n",
+        "  ROUND(SUM(total_cost_usd), 2) AS total_cost_usd,\n",
+        "  ROUND(SUM(total_cost_usd) / NULLIF(SUM(request_count), 0), 4) AS cost_per_request,\n",
+        "  ROUND(SUM(latency_p95_ms * request_count) / NULLIF(SUM(request_count), 0)) AS p95_latency_ms,\n",
+        "  ROUND(AVG(error_rate_pct), 2) AS error_rate_pct,\n",
+        "  SUM(total_tokens) AS total_tokens\n",
+        "FROM\n",
+        "  ai_daily_rollup\n",
+        "WHERE\n",
+        "  cost_allocation_method = 'matched'\n",
+        "GROUP BY\n",
+        "  endpoint_name,\n",
+        "  model_canonical,\n",
+        "  event_date,\n",
+        "  week"
+      ]
+    },
+    {
+      "displayName": "Genie Spaces Metrics",
+      "name": "genie_metrics",
+      "queryLines": [
+        "SELECT\n",
+        "  usage_date,\n",
+        "  surface,\n",
+        "  genie_channel,\n",
+        "  genie_agent_id,\n",
+        "  distinct_users AS user_sessions,\n",
+        "  total_cost_usd,\n",
+        "  total_dbu,\n",
+        "  sql_executions,\n",
+        "  successful_queries,\n",
+        "  querying_users AS querying_sessions,\n",
+        "  avg_query_duration_ms,\n",
+        "  total_bytes_scanned,\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week\n",
+        "FROM\n",
+        "  genie_daily_metrics\n",
+        "WHERE\n",
+        "  usage_date >= current_date() - INTERVAL 90 DAYS\n",
+        "  AND surface != 'genie_code'"
+      ]
+    },
+    {
+      "displayName": "AI Cost (SQL)",
+      "name": "cost_sql",
+      "queryLines": [
+        "SELECT\n",
+        "  usage_date,\n",
+        "  surface,\n",
+        "  billing_origin_product AS billing_product,\n",
+        "  endpoint_name,\n",
+        "  genie_channel,\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week,\n",
+        "  DATE_TRUNC('MONTH', usage_date) AS month,\n",
+        "  user_identity AS user_email,\n",
+        "  workspace_id,\n",
+        "  cost_usd,\n",
+        "  dbu_quantity\n",
+        "FROM\n",
+        "  ai_cost_fact\n",
+        "WHERE\n",
+        "  usage_date >= current_date() - INTERVAL 90 DAYS\n",
+        "  AND billing_origin_product != 'GENIE'"
+      ]
+    },
+    {
+      "displayName": "AI Operations (SQL)",
+      "name": "ops_sql",
+      "queryLines": [
+        "SELECT\n",
+        "  event_date AS usage_date,\n",
+        "  surface,\n",
+        "  model_canonical AS model,\n",
+        "  endpoint_name,\n",
+        "  invocation_source,\n",
+        "  DATE_TRUNC('WEEK', event_date) AS week,\n",
+        "  requester AS user_email,\n",
+        "  input_tokens,\n",
+        "  output_tokens,\n",
+        "  total_tokens,\n",
+        "  cached_tokens,\n",
+        "  latency_ms,\n",
+        "  status_code,\n",
+        "  CASE\n",
+        "    WHEN status_code >= 400 THEN 1\n",
+        "    ELSE 0\n",
+        "  END AS is_error,\n",
+        "  CASE\n",
+        "    WHEN status_code >= 400 THEN 100.0\n",
+        "    ELSE 0.0\n",
+        "  END AS error_pct,\n",
+        "  CASE\n",
+        "    WHEN input_tokens > 0 THEN COALESCE(cached_tokens, 0) * 100.0 / input_tokens\n",
+        "    ELSE NULL\n",
+        "  END AS cache_hit_pct\n",
+        "FROM\n",
+        "  ai_interaction_fact\n",
+        "WHERE\n",
+        "  event_date >= current_date() - INTERVAL 90 DAYS\n",
+        "  AND surface != 'platform_internal'"
+      ]
+    },
+    {
+      "displayName": "Top 10 Endpoints by Cost",
+      "name": "top_endpoints",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  endpoint_name,\n",
+        "  SUM(cost_usd) AS total_cost\n",
+        "FROM\n",
+        "  ai_cost_fact\n",
+        "WHERE\n",
+        "  usage_date >= :date_range.min\n",
+        "  AND usage_date <= :date_range.max\n",
+        "  AND billing_origin_product != 'GENIE'\n",
+        "  AND endpoint_name IS NOT NULL\n",
+        "GROUP BY\n",
+        "  endpoint_name\n",
+        "ORDER BY\n",
+        "  total_cost DESC\n",
+        "LIMIT 10"
+      ]
+    },
+    {
+      "displayName": "AI Cost User Distribution",
+      "name": "cost_user_dist",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "WITH user_costs AS (\n",
+        "  SELECT\n",
+        "    user_identity,\n",
+        "    SUM(cost_usd) AS user_cost,\n",
+        "    CASE\n",
+        "      WHEN SUM(cost_usd) < 10 THEN '$0 – $10'\n",
+        "      WHEN SUM(cost_usd) < 20 THEN '$10 – $20'\n",
+        "      WHEN SUM(cost_usd) < 50 THEN '$20 – $50'\n",
+        "      WHEN SUM(cost_usd) < 100 THEN '$50 – $100'\n",
+        "      WHEN SUM(cost_usd) < 200 THEN '$100 – $200'\n",
+        "      ELSE '$200+'\n",
+        "    END AS cost_bucket\n",
+        "  FROM\n",
+        "    ai_cost_fact\n",
+        "  WHERE\n",
+        "    billing_origin_product != 'GENIE'\n",
+        "    AND (\n",
+        "      :date_range.min IS NULL\n",
+        "      OR usage_date >= :date_range.min\n",
+        "    )\n",
+        "    AND (\n",
+        "      :date_range.max IS NULL\n",
+        "      OR usage_date <= :date_range.max\n",
+        "    )\n",
+        "    AND user_identity IS NOT NULL\n",
+        "  GROUP BY\n",
+        "    user_identity\n",
+        "),\n",
+        "totals AS (\n",
+        "  SELECT\n",
+        "    SUM(user_cost) AS grand_total\n",
+        "  FROM\n",
+        "    user_costs\n",
+        ")\n",
+        "SELECT\n",
+        "  cost_bucket,\n",
+        "  COUNT(*) AS user_count,\n",
+        "  ROUND(SUM(user_cost), 2) AS bucket_total_cost,\n",
+        "  ROUND(SUM(user_cost) * 100.0 / MAX(t.grand_total), 1) AS pct_of_total_spend\n",
+        "FROM\n",
+        "  user_costs CROSS JOIN totals t\n",
+        "GROUP BY\n",
+        "  cost_bucket"
+      ]
+    },
+    {
+      "displayName": "Genie User Distribution",
+      "name": "genie_user_dist",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  cost_bucket,\n",
+        "  COUNT(*) AS user_count,\n",
+        "  SUM(user_cost) AS bucket_total_cost\n",
+        "FROM\n",
+        "  (\n",
+        "    SELECT\n",
+        "      user_identity,\n",
+        "      SUM(cost_usd) AS user_cost,\n",
+        "      CASE\n",
+        "        WHEN SUM(cost_usd) < 10 THEN '$0 – $10'\n",
+        "        WHEN SUM(cost_usd) < 20 THEN '$10 – $20'\n",
+        "        WHEN SUM(cost_usd) < 50 THEN '$20 – $50'\n",
+        "        WHEN SUM(cost_usd) < 100 THEN '$50 – $100'\n",
+        "        WHEN SUM(cost_usd) < 200 THEN '$100 – $200'\n",
+        "        ELSE '$200+'\n",
+        "      END AS cost_bucket\n",
+        "    FROM\n",
+        "      ai_cost_fact\n",
+        "    WHERE\n",
+        "      billing_origin_product = 'GENIE'\n",
+        "      AND (\n",
+        "        :date_range.min IS NULL\n",
+        "        OR usage_date >= :date_range.min\n",
+        "      )\n",
+        "      AND (\n",
+        "        :date_range.max IS NULL\n",
+        "        OR usage_date <= :date_range.max\n",
+        "      )\n",
+        "      AND user_identity IS NOT NULL\n",
+        "    GROUP BY\n",
+        "      user_identity\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  cost_bucket"
+      ]
+    },
+    {
+      "displayName": "Top 25 Models by Volume (Unit Economics)",
+      "name": "top_models_by_volume",
+      "queryLines": [
+        "SELECT\n",
+        "  endpoint_name,\n",
+        "  model_canonical,\n",
+        "  event_date AS usage_date,\n",
+        "  DATE_TRUNC('WEEK', event_date) AS week,\n",
+        "  SUM(request_count) AS total_requests,\n",
+        "  ROUND(SUM(total_cost_usd), 2) AS total_cost_usd,\n",
+        "  ROUND(SUM(total_cost_usd) / NULLIF(SUM(request_count), 0), 4) AS cost_per_request,\n",
+        "  ROUND(AVG(latency_p95_ms)) AS p95_latency_ms,\n",
+        "  ROUND(AVG(error_rate_pct), 2) AS error_rate_pct,\n",
+        "  SUM(total_tokens) AS total_tokens\n",
+        "FROM\n",
+        "  ai_daily_rollup\n",
+        "WHERE\n",
+        "  cost_allocation_method = 'matched'\n",
+        "  AND model_canonical IN (\n",
+        "    SELECT\n",
+        "      model_canonical\n",
+        "    FROM\n",
+        "      ai_daily_rollup\n",
+        "    WHERE\n",
+        "      cost_allocation_method = 'matched'\n",
+        "    GROUP BY\n",
+        "      model_canonical\n",
+        "    ORDER BY\n",
+        "      SUM(request_count) DESC\n",
+        "    LIMIT 25\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  endpoint_name,\n",
+        "  model_canonical,\n",
+        "  event_date,\n",
+        "  week"
+      ]
+    },
+    {
+      "displayName": "Cost per 1M Tokens",
+      "name": "cost_per_token",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  model_canonical,\n",
+        "  SUM(total_cost_usd) AS total_cost,\n",
+        "  SUM(total_tokens) AS total_tokens,\n",
+        "  SUM(request_count) AS total_requests,\n",
+        "  ROUND(SUM(total_cost_usd) / NULLIF(SUM(total_tokens), 0) * 1000000, 2) AS cost_per_1m_tokens\n",
+        "FROM\n",
+        "  ai_daily_rollup\n",
+        "WHERE\n",
+        "  cost_allocation_method = 'matched'\n",
+        "  AND (\n",
+        "    :date_range.min IS NULL\n",
+        "    OR event_date >= :date_range.min\n",
+        "  )\n",
+        "  AND (\n",
+        "    :date_range.max IS NULL\n",
+        "    OR event_date <= :date_range.max\n",
+        "  )\n",
+        "  AND model_canonical IN (\n",
+        "    SELECT\n",
+        "      model_canonical\n",
+        "    FROM\n",
+        "      ai_daily_rollup\n",
+        "    WHERE\n",
+        "      cost_allocation_method = 'matched'\n",
+        "      AND (\n",
+        "        :date_range.min IS NULL\n",
+        "        OR event_date >= :date_range.min\n",
+        "      )\n",
+        "      AND (\n",
+        "        :date_range.max IS NULL\n",
+        "        OR event_date <= :date_range.max\n",
+        "      )\n",
+        "    GROUP BY\n",
+        "      model_canonical\n",
+        "    ORDER BY\n",
+        "      SUM(request_count) DESC\n",
+        "    LIMIT 25\n",
+        "  )\n",
+        "  AND total_tokens > 0\n",
+        "GROUP BY\n",
+        "  model_canonical\n",
+        "ORDER BY\n",
+        "  cost_per_1m_tokens DESC"
+      ]
+    },
+    {
+      "displayName": "WoW Cost Movers",
+      "name": "wow_cost_movers",
+      "queryLines": [
+        "SELECT\n",
+        "  endpoint_name,\n",
+        "  this_week,\n",
+        "  last_week,\n",
+        "  ROUND(this_week - last_week, 2) AS wow_change,\n",
+        "  CASE\n",
+        "    WHEN last_week > 0 THEN ROUND((this_week - last_week) / last_week * 100, 1)\n",
+        "    ELSE NULL\n",
+        "  END AS wow_pct\n",
+        "FROM\n",
+        "  (\n",
+        "    SELECT\n",
+        "      endpoint_name,\n",
+        "      SUM(\n",
+        "        CASE\n",
+        "          WHEN usage_date >= current_date() - INTERVAL 7 DAYS THEN cost_usd\n",
+        "          ELSE 0\n",
+        "        END\n",
+        "      ) AS this_week,\n",
+        "      SUM(\n",
+        "        CASE\n",
+        "          WHEN\n",
+        "            usage_date >= current_date() - INTERVAL 14 DAYS\n",
+        "            AND usage_date < current_date() - INTERVAL 7 DAYS\n",
+        "          THEN\n",
+        "            cost_usd\n",
+        "          ELSE 0\n",
+        "        END\n",
+        "      ) AS last_week\n",
+        "    FROM\n",
+        "      ai_cost_fact\n",
+        "    WHERE\n",
+        "      usage_date >= current_date() - INTERVAL 14 DAYS\n",
+        "      AND billing_origin_product != 'GENIE'\n",
+        "      AND endpoint_name IS NOT NULL\n",
+        "    GROUP BY\n",
+        "      endpoint_name\n",
+        "  )\n",
+        "WHERE\n",
+        "  this_week > 0\n",
+        "  OR last_week > 0\n",
+        "ORDER BY\n",
+        "  wow_change DESC\n",
+        "LIMIT 10"
+      ]
+    },
+    {
+      "displayName": "Daily Volume (Top 5 Models)",
+      "name": "ops_daily_top5",
+      "queryLines": [
+        "WITH top5 AS (\n",
+        "  SELECT\n",
+        "    model_canonical\n",
+        "  FROM\n",
+        "    ai_interaction_fact\n",
+        "  WHERE\n",
+        "    event_date >= current_date() - INTERVAL 90 DAYS\n",
+        "    AND surface != 'platform_internal'\n",
+        "  GROUP BY\n",
+        "    model_canonical\n",
+        "  ORDER BY\n",
+        "    COUNT(*) DESC\n",
+        "  LIMIT 5\n",
+        ")\n",
+        "SELECT\n",
+        "  event_date AS usage_date,\n",
+        "  CASE\n",
+        "    WHEN t.model_canonical IS NOT NULL THEN f.model_canonical\n",
+        "    ELSE 'Other'\n",
+        "  END AS model_group,\n",
+        "  COUNT(*) AS requests\n",
+        "FROM\n",
+        "  ai_interaction_fact f\n",
+        "    LEFT JOIN top5 t\n",
+        "      ON f.model_canonical = t.model_canonical\n",
+        "WHERE\n",
+        "  f.event_date >= current_date() - INTERVAL 90 DAYS\n",
+        "  AND f.surface != 'platform_internal'\n",
+        "GROUP BY\n",
+        "  usage_date,\n",
+        "  model_group"
+      ]
+    },
+    {
+      "displayName": "Genie Spaces Success Rate",
+      "name": "genie_success_rate",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week,\n",
+        "  SUM(successful_queries) AS successful,\n",
+        "  SUM(sql_executions) AS total_executions,\n",
+        "  ROUND(SUM(successful_queries) * 100.0 / NULLIF(SUM(sql_executions), 0), 1) AS success_rate\n",
+        "FROM\n",
+        "  genie_daily_metrics\n",
+        "WHERE\n",
+        "  usage_date >= :date_range.min\n",
+        "  AND usage_date <= :date_range.max\n",
+        "  AND surface != 'genie_code'\n",
+        "GROUP BY\n",
+        "  week\n",
+        "ORDER BY\n",
+        "  week"
+      ]
+    },
+    {
+      "displayName": "Error Rate by Model (1K+ requests)",
+      "name": "error_by_model",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  model_canonical AS model,\n",
+        "  COUNT(*) AS request_count,\n",
+        "  AVG(\n",
+        "    CASE\n",
+        "      WHEN status_code >= 400 THEN 100.0\n",
+        "      ELSE 0.0\n",
+        "    END\n",
+        "  ) AS error_pct\n",
+        "FROM\n",
+        "  ai_interaction_fact\n",
+        "WHERE\n",
+        "  (\n",
+        "    :date_range.min IS NULL\n",
+        "    OR event_date >= :date_range.min\n",
+        "  )\n",
+        "  AND (\n",
+        "    :date_range.max IS NULL\n",
+        "    OR event_date <= :date_range.max\n",
+        "  )\n",
+        "  AND surface != 'platform_internal'\n",
+        "GROUP BY\n",
+        "  model_canonical\n",
+        "HAVING\n",
+        "  COUNT(*) >= 1000\n",
+        "ORDER BY\n",
+        "  error_pct DESC"
+      ]
+    },
+    {
+      "displayName": "Genie Spaces KPI (Accurate)",
+      "name": "genie_kpi_accurate",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week,\n",
+        "  COUNT(DISTINCT user_identity) AS distinct_users,\n",
+        "  SUM(cost_usd) AS total_cost_usd,\n",
+        "  SUM(dbu_quantity) AS total_dbu\n",
+        "FROM\n",
+        "  ai_cost_fact\n",
+        "WHERE\n",
+        "  (\n",
+        "    :date_range.min IS NULL\n",
+        "    OR usage_date >= :date_range.min\n",
+        "  )\n",
+        "  AND (\n",
+        "    :date_range.max IS NULL\n",
+        "    OR usage_date <= :date_range.max\n",
+        "  )\n",
+        "  AND billing_origin_product = 'GENIE'\n",
+        "  AND surface != 'genie_code'\n",
+        "  AND user_identity IS NOT NULL\n",
+        "GROUP BY\n",
+        "  week"
+      ]
+    },
+    {
+      "displayName": "Genie Code KPI",
+      "name": "genie_code_kpi",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week,\n",
+        "  COUNT(DISTINCT user_identity) AS distinct_users,\n",
+        "  SUM(cost_usd) AS total_cost_usd,\n",
+        "  SUM(dbu_quantity) AS total_dbu\n",
+        "FROM\n",
+        "  ai_cost_fact\n",
+        "WHERE\n",
+        "  (\n",
+        "    :date_range.min IS NULL\n",
+        "    OR usage_date >= :date_range.min\n",
+        "  )\n",
+        "  AND (\n",
+        "    :date_range.max IS NULL\n",
+        "    OR usage_date <= :date_range.max\n",
+        "  )\n",
+        "  AND surface = 'genie_code'\n",
+        "  AND user_identity IS NOT NULL\n",
+        "GROUP BY\n",
+        "  week"
+      ]
+    },
+    {
+      "displayName": "Genie Code Daily",
+      "name": "genie_code_daily",
+      "parameters": [
+        {
+          "complexType": "RANGE",
+          "dataType": "DATE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "max": {
+                "value": "now/d"
+              },
+              "min": {
+                "value": "now-90d/d"
+              }
+            }
+          },
+          "displayName": "Date Range",
+          "keyword": "date_range"
+        }
+      ],
+      "queryLines": [
+        "SELECT\n",
+        "  usage_date,\n",
+        "  user_identity AS user_email,\n",
+        "  SUM(cost_usd) AS cost_usd,\n",
+        "  SUM(dbu_quantity) AS dbu_quantity,\n",
+        "  DATE_TRUNC('WEEK', usage_date) AS week\n",
+        "FROM\n",
+        "  ai_cost_fact\n",
+        "WHERE\n",
+        "  (\n",
+        "    :date_range.min IS NULL\n",
+        "    OR usage_date >= :date_range.min\n",
+        "  )\n",
+        "  AND (\n",
+        "    :date_range.max IS NULL\n",
+        "    OR usage_date <= :date_range.max\n",
+        "  )\n",
+        "  AND surface = 'genie_code'\n",
+        "GROUP BY\n",
+        "  usage_date,\n",
+        "  user_identity"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "displayName": "AI Cost & Operations",
+      "layout": [
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_total_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`cost_usd`)",
+                      "name": "sum(cost_usd)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_product` NOT IN ('GENIE')"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(cost_usd)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "decimalPlaces": {
+                      "places": 2,
+                      "type": "exact"
+                    },
+                    "significantFigures": {
+                      "figures": 3,
+                      "type": "exact"
+                    },
+                    "type": "number-currency"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Total AI Cost"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 3,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_total_dbu",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`dbu_quantity`)",
+                      "name": "sum(dbu_quantity)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_product` NOT IN ('GENIE')"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(dbu_quantity)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(dbu_quantity)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "places": 2,
+                      "type": "exact"
+                    },
+                    "type": "number-plain"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Total DBU"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 6,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_endpoints",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "COUNT(DISTINCT `endpoint_name`)",
+                      "name": "countdistinct(endpoint_name)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_product` NOT IN ('GENIE')"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "countdistinct(endpoint_name)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "countdistinct(endpoint_name)"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Active Endpoints"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 9,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_cost_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "COUNT(DISTINCT `user_email`)",
+                      "name": "countdistinct(user_email)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_product` NOT IN ('GENIE')"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "countdistinct(user_email)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "countdistinct(user_email)"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Active Users"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 12,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "cost_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`cost_usd`)",
+                      "name": "sum(cost_usd)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_product` NOT IN ('GENIE')"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Surface",
+                  "fieldName": "surface",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Week",
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Cost",
+                  "fieldName": "sum(cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Stacked — shows composition and total simultaneously",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Weekly AI Spend by Surface"
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "version": 3,
+              "widgetType": "area"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 0,
+            "y": 12
+          },
+          "widget": {
+            "name": "cost_by_endpoint",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_endpoints",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "SUM(`total_cost`)",
+                      "name": "sum(total_cost)"
+                    },
+                    {
+                      "expression": "`endpoint_name`",
+                      "name": "endpoint_name"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Cost",
+                  "fieldName": "sum(total_cost)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Endpoint",
+                  "fieldName": "endpoint_name",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(total_cost)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top 10 Endpoints by Cost"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "multilineTextboxSpec": {
+              "lines": [
+                "## AI Cost & Spend\n",
+                "Model Serving, AI Gateway, and AI Functions — excluding Genie. All widgets respect the global date filter. KPI counters compare the current week vs prior week within the selected range."
+              ]
+            },
+            "name": "header"
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 12,
+            "x": 0,
+            "y": 19
+          },
+          "widget": {
+            "name": "user_dist",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_user_dist",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "SUM(`pct_of_total_spend`)",
+                      "name": "sum(pct_of_total_spend)"
+                    },
+                    {
+                      "expression": "`cost_bucket`",
+                      "name": "cost_bucket"
+                    },
+                    {
+                      "expression": "SUM(`user_count`)",
+                      "name": "sum(user_count)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "extra": [
+                  {
+                    "displayName": "% of Total Spend",
+                    "fieldName": "sum(pct_of_total_spend)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 1,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }}%"
+                  }
+                ],
+                "x": {
+                  "displayName": "Spend Bracket",
+                  "fieldName": "cost_bucket",
+                  "scale": {
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "$0 – $10",
+                        "$10 – $20",
+                        "$20 – $50",
+                        "$50 – $100",
+                        "$100 – $200",
+                        "$200+"
+                      ]
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "Users",
+                  "fieldName": "sum(user_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Per-user spend in selected date range (non-Genie). Hover for % of total spend.",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "User Cost Distribution"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 6,
+            "y": 12
+          },
+          "widget": {
+            "name": "wow_movers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wow_cost_movers",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`endpoint_name`",
+                      "name": "endpoint_name"
+                    },
+                    {
+                      "expression": "SUM(`this_week`)",
+                      "name": "sum(this_week)"
+                    },
+                    {
+                      "expression": "SUM(`last_week`)",
+                      "name": "sum(last_week)"
+                    },
+                    {
+                      "expression": "SUM(`wow_change`)",
+                      "name": "sum(wow_change)"
+                    },
+                    {
+                      "expression": "AVG(`wow_pct`)",
+                      "name": "avg(wow_pct)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`wow_change`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "bandedRows": {
+                "enabled": true
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "Endpoint",
+                    "fieldName": "endpoint_name",
+                    "useForSearch": true
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "This Wk",
+                    "fieldName": "sum(this_week)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "currencyCode": "USD",
+                      "type": "number-currency"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Last Wk",
+                    "fieldName": "sum(last_week)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "currencyCode": "USD",
+                      "type": "number-currency"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Δ $",
+                    "fieldName": "sum(wow_change)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "currencyCode": "USD",
+                      "type": "number-currency"
+                    },
+                    "style": {
+                      "rules": [
+                        {
+                          "bold": true,
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "500"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "-100"
+                            },
+                            "operator": "<"
+                          },
+                          "foregroundColor": "#34D399"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Δ %",
+                    "fieldName": "avg(wow_pct)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 1,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }}%",
+                    "style": {
+                      "rules": [
+                        {
+                          "bold": true,
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "50"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "-20"
+                            },
+                            "operator": "<"
+                          },
+                          "foregroundColor": "#34D399"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  }
+                ],
+                "rowOrder": [
+                  {
+                    "by": "column-reversed",
+                    "field": {
+                      "index": 3
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "description": "Fixed window: last 7d vs prior 7d. Not affected by global date filter.",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "WoW Cost Movers"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "d54a09d1",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "AI Operations & Adoption",
+      "layout": [
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_requests",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "COUNT(`*`)",
+                      "name": "count(*)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "count(*)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "count(*)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "type": "number-plain"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Total Requests"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 3,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "COUNT(DISTINCT `user_email`)",
+                      "name": "countdistinct(user_email)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "countdistinct(user_email)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "countdistinct(user_email)"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Unique Users"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 6,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_error_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "AVG(`error_pct`)",
+                      "name": "avg(error_pct)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "avg(error_pct)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "avg(error_pct)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 2,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "formatTemplate": "{{ @formatted }}%"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Error Rate"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 9,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_p95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "PERCENTILE(`latency_ms`, 0.95)",
+                      "name": "percentile(latency_ms, percentage=0_95)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "percentile(latency_ms, percentage=0_95)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "percentile(latency_ms, percentage=0_95)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 0,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "formatTemplate": "{{ @formatted }} ms"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "P95 Latency"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 8,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "daily_volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_daily_top5",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model_group`",
+                      "name": "model_group"
+                    },
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "SUM(`requests`)",
+                      "name": "sum(requests)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Model",
+                  "fieldName": "model_group",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Date",
+                  "fieldName": "usage_date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Requests",
+                  "fieldName": "sum(requests)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Remaining models grouped as 'Other'",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Daily Request Volume (Top 5 Models)"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 4,
+            "x": 8,
+            "y": 5
+          },
+          "widget": {
+            "name": "surface_traffic",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "COUNT(`*`)",
+                      "name": "count(*)"
+                    },
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`surface` NOT IN ('platform_internal')"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Requests",
+                  "fieldName": "count(*)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Surface",
+                  "fieldName": "surface",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "count(*)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Excludes platform_internal (12.5M internal calls)",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "User-Facing Traffic by Surface"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 4,
+            "x": 0,
+            "y": 12
+          },
+          "widget": {
+            "name": "error_by_model",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "error_by_model",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "SUM(`error_pct`)",
+                      "name": "sum(error_pct)"
+                    },
+                    {
+                      "expression": "`model`",
+                      "name": "model"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`error_pct`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Error Rate (%)",
+                  "fieldName": "sum(error_pct)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 2,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "formatTemplate": "{{ @formatted }}%",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Model",
+                  "fieldName": "model",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(error_pct)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Models with 1,000+ requests only",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Error Rate by Model"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 8,
+            "x": 4,
+            "y": 12
+          },
+          "widget": {
+            "name": "model_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model`",
+                      "name": "model"
+                    },
+                    {
+                      "expression": "COUNT(`*`)",
+                      "name": "count(*)"
+                    },
+                    {
+                      "expression": "PERCENTILE(`latency_ms`, 0.5)",
+                      "name": "percentile(latency_ms, percentage=0_5)"
+                    },
+                    {
+                      "expression": "PERCENTILE(`latency_ms`, 0.95)",
+                      "name": "percentile(latency_ms, percentage=0_95)"
+                    },
+                    {
+                      "expression": "AVG(`error_pct`)",
+                      "name": "avg(error_pct)"
+                    },
+                    {
+                      "expression": "SUM(`total_tokens`)",
+                      "name": "sum(total_tokens)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "bandedRows": {
+                "enabled": true
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "Model",
+                    "fieldName": "model",
+                    "useForSearch": true
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Requests",
+                    "fieldName": "count(*)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "P50 Latency",
+                    "fieldName": "percentile(latency_ms, percentage=0_5)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 0,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }} ms"
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "P95 Latency",
+                    "fieldName": "percentile(latency_ms, percentage=0_95)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 0,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }} ms",
+                    "style": {
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "30000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "10000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#FBBF24"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Error %",
+                    "fieldName": "avg(error_pct)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 2,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }}%",
+                    "style": {
+                      "rules": [
+                        {
+                          "bold": true,
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "10"
+                            },
+                            "operator": ">="
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "5"
+                            },
+                            "operator": ">="
+                          },
+                          "foregroundColor": "#FBBF24"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "1"
+                            },
+                            "operator": "<"
+                          },
+                          "foregroundColor": "#34D399"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Tokens",
+                    "fieldName": "sum(total_tokens)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  }
+                ],
+                "rowOrder": [
+                  {
+                    "by": "column-reversed",
+                    "field": {
+                      "index": 1
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Model Leaderboard"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "multilineTextboxSpec": {
+              "lines": [
+                "# AI Operations & Adoption\n",
+                "Per-request telemetry from AI Gateway — latency, errors, model usage, and token consumption. Excludes `platform_internal` (12.5M orchestration calls). All widgets respect the global date filter."
+              ]
+            },
+            "name": "header"
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "operations",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Unit Economics",
+      "layout": [
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "cost_per_req",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_models_by_volume",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "AVG(`cost_per_request`)",
+                      "name": "avg(cost_per_request)"
+                    },
+                    {
+                      "expression": "`model_canonical`",
+                      "name": "model_canonical"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "AVG(`cost_per_request`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "$/Request",
+                  "fieldName": "avg(cost_per_request)",
+                  "format": {
+                    "abbreviation": "none",
+                    "currencyCode": "USD",
+                    "decimalPlaces": {
+                      "places": 3,
+                      "type": "max"
+                    },
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Model",
+                  "fieldName": "model_canonical",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "avg(cost_per_request)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Top 25 models by request volume",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Cost per Request by Model"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 6,
+            "y": 2
+          },
+          "widget": {
+            "name": "efficiency_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_per_token",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "SUM(`cost_per_1m_tokens`)",
+                      "name": "sum(cost_per_1m_tokens)"
+                    },
+                    {
+                      "expression": "`model_canonical`",
+                      "name": "model_canonical"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`cost_per_1m_tokens`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "$/1M Tokens",
+                  "fieldName": "sum(cost_per_1m_tokens)",
+                  "format": {
+                    "abbreviation": "none",
+                    "currencyCode": "USD",
+                    "decimalPlaces": {
+                      "places": 2,
+                      "type": "max"
+                    },
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Model",
+                  "fieldName": "model_canonical",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(cost_per_1m_tokens)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Top 25 models by request volume",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Cost per 1M Tokens by Model"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 12,
+            "x": 0,
+            "y": 8
+          },
+          "widget": {
+            "name": "endpoint_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "unit_economics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`endpoint_name`",
+                      "name": "endpoint_name"
+                    },
+                    {
+                      "expression": "`model_canonical`",
+                      "name": "model_canonical"
+                    },
+                    {
+                      "expression": "SUM(`total_cost_usd`)",
+                      "name": "sum(total_cost_usd)"
+                    },
+                    {
+                      "expression": "SUM(`total_requests`)",
+                      "name": "sum(total_requests)"
+                    },
+                    {
+                      "expression": "AVG(`cost_per_request`)",
+                      "name": "avg(cost_per_request)"
+                    },
+                    {
+                      "expression": "AVG(`p95_latency_ms`)",
+                      "name": "avg(p95_latency_ms)"
+                    },
+                    {
+                      "expression": "AVG(`error_rate_pct`)",
+                      "name": "avg(error_rate_pct)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`total_cost_usd`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "bandedRows": {
+                "enabled": true
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "Endpoint",
+                    "fieldName": "endpoint_name",
+                    "useForSearch": true
+                  },
+                  {
+                    "displayName": "Model",
+                    "fieldName": "model_canonical"
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Total Cost",
+                    "fieldName": "sum(total_cost_usd)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "currencyCode": "USD",
+                      "type": "number-currency"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Requests",
+                    "fieldName": "sum(total_requests)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "$/Request",
+                    "fieldName": "avg(cost_per_request)",
+                    "format": {
+                      "abbreviation": "none",
+                      "currencyCode": "USD",
+                      "decimalPlaces": {
+                        "places": 4,
+                        "type": "max"
+                      },
+                      "type": "number-currency"
+                    },
+                    "style": {
+                      "rules": [
+                        {
+                          "bold": true,
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0.1"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0.01"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#FBBF24"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "P95 Latency",
+                    "fieldName": "avg(p95_latency_ms)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 0,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }} ms",
+                    "style": {
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "30000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "10000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#FBBF24"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Error %",
+                    "fieldName": "avg(error_rate_pct)",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 2,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }}%",
+                    "style": {
+                      "rules": [
+                        {
+                          "bold": true,
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "10"
+                            },
+                            "operator": ">="
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "5"
+                            },
+                            "operator": ">="
+                          },
+                          "foregroundColor": "#FBBF24"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "1"
+                            },
+                            "operator": "<"
+                          },
+                          "foregroundColor": "#34D399"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  }
+                ],
+                "rowOrder": [
+                  {
+                    "by": "column-reversed",
+                    "field": {
+                      "index": 2
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Endpoint Economics"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Unit Economics\n",
+                "Cost-per-request for the ~24% of spend with per-request telemetry (endpoint-matched billing × AI Gateway)."
+              ]
+            },
+            "name": "header"
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "unit_economics",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Genie Spaces",
+      "layout": [
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`total_cost_usd`)",
+                      "name": "sum(total_cost_usd)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(total_cost_usd)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(total_cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie Cost"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 3,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_kpi_accurate",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`distinct_users`)",
+                      "name": "sum(distinct_users)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(distinct_users)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(distinct_users)"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week (true distinct)",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie Users"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 6,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_sql",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`sql_executions`)",
+                      "name": "sum(sql_executions)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(sql_executions)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(sql_executions)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "type": "number-plain"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "SQL Executions"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 3,
+            "x": 9,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_success",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`successful_queries`)",
+                      "name": "sum(successful_queries)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(successful_queries)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(successful_queries)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "type": "number-plain"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Successful Queries"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 6,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "cost_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`total_cost_usd`)",
+                      "name": "sum(total_cost_usd)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Surface",
+                  "fieldName": "surface",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Week",
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Cost (USD)",
+                  "fieldName": "sum(total_cost_usd)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly Genie Cost by Surface"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 6,
+            "x": 6,
+            "y": 5
+          },
+          "widget": {
+            "name": "users_by_surface",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "genie_channel"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "surface"
+                        ]
+                      }
+                    ]
+                  },
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`genie_channel`",
+                      "name": "genie_channel"
+                    },
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "SUM(`user_sessions`)",
+                      "name": "sum(user_sessions)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`user_sessions`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Channel",
+                  "fieldName": "genie_channel",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Surface",
+                  "fieldName": "surface",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(user_sessions)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "User-Sessions",
+                  "fieldName": "sum(user_sessions)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Users by Surface & Channel"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 0,
+            "y": 12
+          },
+          "widget": {
+            "name": "sql_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_success_rate",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`success_rate`)",
+                      "name": "sum(success_rate)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Week",
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Success Rate (%)",
+                  "fieldName": "sum(success_rate)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 1,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "formatTemplate": "{{ @formatted }}%",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": "% of SQL executions that succeed",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Query Success Rate Trend"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 6,
+            "x": 6,
+            "y": 12
+          },
+          "widget": {
+            "name": "space_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "`genie_channel`",
+                      "name": "genie_channel"
+                    },
+                    {
+                      "expression": "SUM(`user_sessions`)",
+                      "name": "sum(user_sessions)"
+                    },
+                    {
+                      "expression": "SUM(`total_cost_usd`)",
+                      "name": "sum(total_cost_usd)"
+                    },
+                    {
+                      "expression": "SUM(`sql_executions`)",
+                      "name": "sum(sql_executions)"
+                    },
+                    {
+                      "expression": "SUM(`successful_queries`)",
+                      "name": "sum(successful_queries)"
+                    },
+                    {
+                      "expression": "AVG(`avg_query_duration_ms`)",
+                      "name": "avg(avg_query_duration_ms)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`total_cost_usd`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "bandedRows": {
+                "enabled": true
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "Surface",
+                    "fieldName": "surface"
+                  },
+                  {
+                    "displayName": "Channel",
+                    "fieldName": "genie_channel"
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "User-Sessions",
+                    "fieldName": "sum(user_sessions)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Cost",
+                    "fieldName": "sum(total_cost_usd)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "currencyCode": "USD",
+                      "type": "number-currency"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "SQL Runs",
+                    "fieldName": "sum(sql_executions)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Successful",
+                    "fieldName": "sum(successful_queries)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    }
+                  },
+                  {
+                    "contentAlignment": "right",
+                    "displayName": "Avg Duration",
+                    "fieldName": "avg(avg_query_duration_ms)",
+                    "format": {
+                      "abbreviation": "compact",
+                      "type": "number-plain"
+                    },
+                    "formatTemplate": "{{ @formatted }} ms",
+                    "style": {
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "10000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#F87171"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "5000"
+                            },
+                            "operator": ">"
+                          },
+                          "foregroundColor": "#FBBF24"
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  }
+                ],
+                "rowOrder": [
+                  {
+                    "by": "column-reversed",
+                    "field": {
+                      "index": 3
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Genie Metrics by Surface"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Genie Spaces\n",
+                "Genie Spaces, One, and other NL→SQL surfaces. Query execution, success rates, and adoption. For AI coding assistant metrics, see the **Genie Code** tab."
+              ]
+            },
+            "name": "header"
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 12,
+            "x": 0,
+            "y": 19
+          },
+          "widget": {
+            "name": "user_dist",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_user_dist",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`cost_bucket`",
+                      "name": "cost_bucket"
+                    },
+                    {
+                      "expression": "SUM(`user_count`)",
+                      "name": "sum(user_count)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Spend Bracket",
+                  "fieldName": "cost_bucket",
+                  "scale": {
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "$0 – $10",
+                        "$10 – $20",
+                        "$20 – $50",
+                        "$50 – $100",
+                        "$100 – $200",
+                        "$200+"
+                      ]
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "Users",
+                  "fieldName": "sum(user_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Per-user spend in selected date range (Genie Spaces only)",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie User Cost Distribution"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "genie",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "position": {
+            "height": 2,
+            "width": 3,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "date_range",
+            "queries": [
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_usage_date",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_usage_date",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e47a601b56aa92be50b7576130_usage_date",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e1175911fb83f466ec1ebf21cc_usage_date",
+                "query": {
+                  "datasetName": "unit_economics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f593d31ab9a9c47bd97c88949f_usage_date",
+                "query": {
+                  "datasetName": "ops_daily_top5",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1a02914daada7220c4bab52b0_usage_date",
+                "query": {
+                  "datasetName": "top_models_by_volume",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "usage_date_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189ec6b89175c9b40be3b9eaa7192_date_range",
+                "query": {
+                  "datasetName": "top_endpoints",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f594071589b2a98efb3f2c15f3_date_range",
+                "query": {
+                  "datasetName": "genie_success_rate",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f4b06811eb2b71cb1523956ee9d_date_range",
+                "query": {
+                  "datasetName": "genie_code_kpi",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f4b07021649a49fbf32448ccc37_date_range",
+                "query": {
+                  "datasetName": "genie_code_daily",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f48b2461c4a84857c26de7ea807_date_range",
+                "query": {
+                  "datasetName": "genie_kpi_accurate",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1095412738c92c1321e6880ae_date_range",
+                "query": {
+                  "datasetName": "cost_user_dist",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1098c134a85bb7a04629ceeab_date_range",
+                "query": {
+                  "datasetName": "genie_user_dist",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f88d351fe3b8fba2f4b764ab62_date_range",
+                "query": {
+                  "datasetName": "error_by_model",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f5182f10d6a2076c5a7ad1f2ad_date_range",
+                "query": {
+                  "datasetName": "cost_per_token",
+                  "disaggregated": false,
+                  "parameters": [
+                    {
+                      "keyword": "date_range",
+                      "name": "date_range"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_usage_date"
+                  },
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_usage_date"
+                  },
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e47a601b56aa92be50b7576130_usage_date"
+                  },
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e1175911fb83f466ec1ebf21cc_usage_date"
+                  },
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f593d31ab9a9c47bd97c88949f_usage_date"
+                  },
+                  {
+                    "fieldName": "usage_date",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1a02914daada7220c4bab52b0_usage_date"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189ec6b89175c9b40be3b9eaa7192_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f594071589b2a98efb3f2c15f3_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f4b06811eb2b71cb1523956ee9d_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f4b07021649a49fbf32448ccc37_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f18f48b2461c4a84857c26de7ea807_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1095412738c92c1321e6880ae_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f1098c134a85bb7a04629ceeab_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f88d351fe3b8fba2f4b764ab62_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189f5182f10d6a2076c5a7ad1f2ad_date_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Date Range"
+              },
+              "version": 2,
+              "widgetType": "filter-date-range-picker"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 3,
+            "x": 3,
+            "y": 0
+          },
+          "widget": {
+            "name": "user_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_user_email",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`user_email`",
+                      "name": "user_email"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "user_email_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_user_email",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`user_email`",
+                      "name": "user_email"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "user_email_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "user_email",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_user_email"
+                  },
+                  {
+                    "fieldName": "user_email",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_user_email"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "User"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 3,
+            "x": 6,
+            "y": 0
+          },
+          "widget": {
+            "name": "workspace_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_workspace_id",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`workspace_id`",
+                      "name": "workspace_id"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "workspace_id_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "workspace_id",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_workspace_id"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Workspace"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 3,
+            "x": 9,
+            "y": 0
+          },
+          "widget": {
+            "name": "surface_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_surface",
+                "query": {
+                  "datasetName": "cost_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "surface_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_surface",
+                "query": {
+                  "datasetName": "ops_sql",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "surface_associativity"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e47a601b56aa92be50b7576130_surface",
+                "query": {
+                  "datasetName": "genie_metrics",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`surface`",
+                      "name": "surface"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "surface_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "surface",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e816cd1608a6fc902dd01b7daa_surface"
+                  },
+                  {
+                    "fieldName": "surface",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e817071baaaa9c605223a1a0fa_surface"
+                  },
+                  {
+                    "fieldName": "surface",
+                    "queryName": "dashboards/01f189e0ca2a1ac4b761386a5f92098f/datasets/01f189e47a601b56aa92be50b7576130_surface"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Surface"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "global_filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS"
+    },
+    {
+      "displayName": "Genie Code",
+      "layout": [
+        {
+          "position": {
+            "height": 2,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Genie Code\n",
+                "AI coding assistant usage (notebooks, SQL editor, chat). Cost, adoption, and per-user breakdown. All widgets respect the global date filter; KPIs compare current vs prior week."
+              ]
+            },
+            "name": "header"
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 4,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`total_cost_usd`)",
+                      "name": "sum(total_cost_usd)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(total_cost_usd)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(total_cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie Code Cost"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 4,
+            "x": 4,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`distinct_users`)",
+                      "name": "sum(distinct_users)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(distinct_users)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(distinct_users)"
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week (true distinct)",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie Code Users"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 3,
+            "width": 4,
+            "x": 8,
+            "y": 2
+          },
+          "widget": {
+            "name": "kpi_dbu",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`total_dbu`)",
+                      "name": "sum(total_dbu)"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "`week`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "period": {
+                  "fieldName": "week"
+                },
+                "target": {
+                  "fieldName": "sum(total_dbu)",
+                  "period": {
+                    "offset": -1,
+                    "type": "relative-to-value-period"
+                  }
+                },
+                "value": {
+                  "fieldName": "sum(total_dbu)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "type": "number-plain"
+                  }
+                }
+              },
+              "frame": {
+                "description": "Current week vs prior week",
+                "showDescription": true,
+                "showTitle": true,
+                "title": "Genie Code DBU"
+              },
+              "version": 2,
+              "widgetType": "counter"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 6,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "cost_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`week`",
+                      "name": "week"
+                    },
+                    {
+                      "expression": "SUM(`cost_usd`)",
+                      "name": "sum(cost_usd)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Week",
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Cost",
+                  "fieldName": "sum(cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly Genie Code Spend"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 7,
+            "width": 6,
+            "x": 6,
+            "y": 5
+          },
+          "widget": {
+            "name": "top_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "SUM(`cost_usd`)",
+                      "name": "sum(cost_usd)"
+                    },
+                    {
+                      "expression": "`user_email`",
+                      "name": "user_email"
+                    }
+                  ],
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`cost_usd`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Cost",
+                  "fieldName": "sum(cost_usd)",
+                  "format": {
+                    "abbreviation": "compact",
+                    "currencyCode": "USD",
+                    "type": "number-currency"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "User",
+                  "fieldName": "user_email",
+                  "scale": {
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(cost_usd)"
+                      }
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top Users by Spend"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 6,
+            "width": 12,
+            "x": 0,
+            "y": 12
+          },
+          "widget": {
+            "name": "daily_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_code_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`usage_date`",
+                      "name": "usage_date"
+                    },
+                    {
+                      "expression": "COUNT(DISTINCT `user_email`)",
+                      "name": "countdistinct(user_email)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "x": {
+                  "displayName": "Date",
+                  "fieldName": "usage_date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Users",
+                  "fieldName": "countdistinct(user_email)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Active Users"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        }
+      ],
+      "layoutVersion": "GRID_V1",
+      "name": "genie_code",
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "applyModeEnabled": false,
+    "theme": {
+      "canvasBackgroundColor": {
+        "dark": "#0D1117",
+        "light": "#F8FAFC"
+      },
+      "continuousGradient": {
+        "darkMode": {
+          "fromCategoricalIndex": 5
+        },
+        "lightMode": {
+          "fromCategoricalIndex": 5
+        }
+      },
+      "fontColor": {
+        "dark": "#E8ECF0",
+        "light": "#11171C"
+      },
+      "fontSettings": {
+        "base": {
+          "fontColor": {
+            "dark": "#C9D1D9",
+            "light": "#334155"
+          },
+          "fontFamily": "Space Grotesk"
+        },
+        "fieldTitle": {
+          "fontColor": {
+            "dark": "#8B949E",
+            "light": "#64748B"
+          },
+          "fontFamily": "Space Grotesk",
+          "fontWeight": 500
+        },
+        "fieldValue": {
+          "fontColor": {
+            "dark": "#C9D1D9",
+            "light": "#334155"
+          },
+          "fontFamily": "Space Grotesk"
+        },
+        "widgetDescription": {
+          "fontColor": {
+            "dark": "#8B949E",
+            "light": "#64748B"
+          },
+          "fontSize": 11
+        },
+        "widgetTitle": {
+          "fontColor": {
+            "dark": "#E6EDF3",
+            "light": "#0F172A"
+          },
+          "fontFamily": "Space Grotesk",
+          "fontSize": 14,
+          "fontWeight": 600
+        }
+      },
+      "gridLineColor": {
+        "dark": "#1C2128",
+        "light": "#F1F5F9"
+      },
+      "selectionColor": {
+        "dark": "#818CF8",
+        "light": "#6366F1"
+      },
+      "textBoxVerticalAlign": "VERTICAL_ALIGN_CENTER",
+      "visualizationColors": [
+        "#818CF8",
+        "#34D399",
+        "#F472B6",
+        "#FBBF24",
+        "#60A5FA",
+        "#A78BFA",
+        "#F87171",
+        "#2DD4BF",
+        "#FB923C",
+        "#38BDF8"
+      ],
+      "widgetBackgroundColor": {
+        "dark": "#161B22",
+        "light": "#FFFFFF"
+      },
+      "widgetBorderColor": {
+        "dark": "#21262D",
+        "light": "#E2E8F0"
+      },
+      "widgetCornerRadius": 12,
+      "widgetHeaderAlignment": "LEFT",
+      "widgetMargin": 8,
+      "widgetPadding": 16,
+      "widgetShadow": 0
+    }
+  }
+}

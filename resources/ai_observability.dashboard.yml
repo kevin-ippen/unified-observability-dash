@@ -1,0 +1,6 @@
+resources:
+  dashboards:
+    ai_observability:
+      display_name: "AI Observability — Executive View"
+      warehouse_id: 148ccb90800933a1
+      file_path: ../src/ai_observability.lvdash.json

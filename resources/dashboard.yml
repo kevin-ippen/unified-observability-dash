@@ -1,0 +1,12 @@
+resources:
+  dashboards:
+    ai_observability:
+      display_name: "[${bundle.target}] AI Observability — Executive View"
+      file_path: ../src/ai_observability.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      # CLI 0.281.0+ — sets default catalog/schema for all unqualified table refs
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}
+      permissions:
+        - level: CAN_RUN
+          group_name: "users"

@@ -1,0 +1,2 @@
+# Run: databricks bundle generate dashboard --existing-id 01f189e0ca2a1ac4b761386a5f92098f --key ai_observability
+# Then: python scripts/strip_catalog_prefix.py src/dashboards/ai_observability.lvdash.json

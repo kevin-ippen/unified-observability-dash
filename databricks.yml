@@ -1,0 +1,38 @@
+bundle:
+  name: ai-observability-dashboard
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: "Catalog containing the ai_observability schema"
+    default: "main"
+  schema:
+    description: "Schema containing the observability tables (ai_cost_fact, ai_interaction_fact, ai_daily_rollup, genie_daily_metrics)"
+    default: "ai_observability"
+  warehouse_id:
+    description: "SQL warehouse ID for the dashboard"
+    lookup:
+      warehouse: "Shared Endpoint"
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://adb-984752964297111.11.azuredatabricks.net
+    variables:
+      catalog: "main"
+      schema: "ai_observability"
+
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-984752964297111.11.azuredatabricks.net
+    variables:
+      catalog: "main"
+      schema: "ai_observability"
+    permissions:
+      - level: CAN_RUN
+        group_name: "users"
